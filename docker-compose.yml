@@ -1,0 +1,26 @@
+services:
+
+  master:
+    build: ./Master
+    ports:
+      - "5000:5000"
+    container_name: Master
+    restart: always
+    expose:
+      - "5000"
+  anothersecondary:
+    build: ./Another Secondary
+    ports:
+      - "8080:8080"
+    container_name: AnotherSecondary
+    restart: always
+    expose:
+      - "8080"
+  secondary:
+    build: ./Secondary
+    ports:
+      - "8000:8000"
+    container_name: Secondary
+    restart: always
+    expose:
+      - "8000"
