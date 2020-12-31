@@ -5,15 +5,16 @@ import json
 from app import app
 from threading import Thread
 import queue
+import time
 
-secondary_url = ['http://secondary:8000/messages', 'http://anothersecondary:8080/messages']
+#secondary_url = ['http://secondary:8000/messages', 'http://anothersecondary:8080/messages']
 
-#secondary_url = ['http://localhost:8000/messages', 'http://localhost:8080/messages']
+secondary_url = ['http://localhost:8000/messages', 'http://localhost:8080/messages']
 
-messages = []
+messages = {}
 
 write_concern = 2
-
+retries = 3
 
 @app.route('/')
 def index():
@@ -22,6 +23,7 @@ def index():
 
 @app.route('/messages', methods=['GET'])
 def get_tasks():
+    print(messages)
     return jsonify({'messages': messages})
 
 @app.route('/configs', methods=['GET'])
@@ -42,7 +44,8 @@ def update_configs():
 def create_task():
     if not request.json or not 'text' in request.json:
         abort(400)
-
+    global write_concern
+    write_concern = int(request.json['write_concern'])
     message_id = []
     text = request.json['text']
     if len(messages) == 0:
@@ -52,38 +55,50 @@ def create_task():
     message = {
         'jsonrpc': '2.0',
         'method': 'save_message',
-        'params': {'text': text},
+        'params': {'text': text, 'messageId': id},
         'id': id
     }
-    messages.append(text)
+    #messages.append(text)
+    if id not in messages:
+        messages[id] = text
     message_id.append(id)
     q = queue.Queue()
-    threads = [Thread(target=message_sender, args=(secondary_url[i], message, message_id, q)) for i in
+    threads = [Thread(target=message_sender, args=(secondary_url[i], message, message_id, q, 1)) for i in
                range(0, len(secondary_url))]
 
+    for thread in threads:
+        thread.start()
+
     if write_concern == 1:
-        for thread in threads:
-            thread.start()
         print(message_id)
         return jsonify({'MessageId': message_id}), 201
 
     if write_concern == 3:
         print(write_concern)
         for thread in threads:
-            thread.start()
-        for thread in threads:
             thread.join()
-        return jsonify({'MessageId': message_id}), 201
+        if len(message_id) == write_concern:
+            return jsonify({'MessageId': message_id}), 201
+        else:
+            return jsonify({'error': '500'}), 500
 
     if write_concern == 2:
-        for thread in threads:
-            thread.start()
         q.get()
         return jsonify({'MessageId': message_id}), 201
 
-
-def message_sender(secondary_url, message, message_id, result_queue):
-    client = HTTPClient(secondary_url)
-    response = client.send(json.dumps(message))
-    message_id.append(response.data.id)
-    result_queue.put(response.data.id)
+def message_sender(secondary_url, message, message_id, result_queue, retries_cnt):
+   if retries_cnt <= retries:
+        client = HTTPClient(secondary_url)
+        print(len(message_id))
+        try:
+            response = client.send(json.dumps(message))
+            print(json.loads(response.text))
+            message_id.append(response.data.id)
+            result_queue.put(response.data.id)
+            print(len(message_id))
+        except:
+            print('exception')
+            time.sleep(40)
+            message_sender(secondary_url, message, message_id, result_queue, retries_cnt + 1)
+   else:
+       print('node ' + secondary_url + ' doesn''t work')
